@@ -52,31 +52,23 @@ class ControlNode:
             task_id = task_data['task_id']
             task_file_path = f"task/task{task_id}.py"
             setup_file_path = f"task/setup{task_id}.txt"
-
-            # 读取任务设置文件
-            try:
-                with open(setup_file_path, 'r') as f:
-                    setup_info = json.load(f)
-            except Exception as e:
-                print(f"Error reading setup file {setup_file_path}: {e}")
-                return
-
-            task_parts = self.split_task(setup_info)
             
             # 分发任务文件和任务数据到计算节点
             for i, node_id in enumerate(self.compute_nodes):
                 try:
                     conn = self.compute_conns[node_id]
                     conn.send("please accept task".encode())
-                    time.sleep(0.1)
+                    time.sleep(0.3)
                     self.send_task_file(node_id, task_file_path)
-                    time.sleep(0.1)
-                    if task_parts:
-                        self.send_task(node_id, task_id, task_parts[i])
-                    else:
-                        self.send_task(node_id, task_id, None)
+                    time.sleep(0.3)
+                    conn.send("please accept data".encode())
+                    time.sleep(0.5)
+                    self.send_set_up_file(node_id, setup_file_path)
+                    time.sleep(0.75)
+                    self.send_task(i,node_id,task_id)
                 except Exception as e:
                     print(f"Error sending task to node {node_id}: {e}")
+
             t_start = time.time()
             #从reduce计算节点接收最终结果
             while True:
@@ -96,23 +88,20 @@ class ControlNode:
         except Exception as e:
             print(f"Error handling start task: {e}")
 
-    def split_task(self, setup_info):
-        # 假设 setup_info 包含需要划分的数据
-        data = setup_info['data']
-        if data:
-            num_nodes = len(self.compute_nodes)
+    def send_set_up_file(self, node_id, setup_file_path):
+        conn = self.compute_conns[node_id]
+        try:
+            with open(setup_file_path, 'rb') as f:
+                for i in f:
+                    conn.send(i)
+            time.sleep(0.75)
+            conn.send('quit'.encode())
+            print(f"Sent Set up file {setup_file_path} to node {node_id}")
+        except FileNotFoundError:
+            print(f"Error: Set up file {setup_file_path} not found.")
+        except Exception as e:
+            print(f"Error sending Set up file {setup_file_path} to node {node_id}: {e}")
             
-            # 创建一个字典来存储每个节点的数据
-            node_data = {i: [] for i in range(num_nodes)}
-            
-            # 使用哈希函数来分配数据
-            for item in data:
-                node_id = hash(item) % num_nodes
-                node_data[node_id].append(item)
-            return node_data
-        else:
-            return None
-
     def send_task_file(self, node_id, task_file_path):
         conn = self.compute_conns[node_id]
         try:
@@ -130,12 +119,12 @@ class ControlNode:
         except Exception as e:
             print(f"Error sending task file {task_file_path} to node {node_id}: {e}")
 
-    def send_task(self, node_id, task_id, task_part):
+    def send_task(self,i,node_id, task_id):
         conn = self.compute_conns[node_id]
         try:
-            message = json.dumps({'type': 'task', 'task_id': task_id ,'joint_node': len(self.compute_nodes), 'part': task_part}).encode()
+            message = json.dumps({'type': 'task', 'task_id': task_id ,'joint_node': len(self.compute_nodes),'rank':i}).encode()
             conn.sendall(message)
-            print(f"Sent task part to node {node_id}")
+            print(f"Sent start task to node {node_id}")
         except Exception as e:
             print(f"Error sending task to node {node_id}: {e}")
 
