@@ -17,6 +17,7 @@ class ComputeNode:
         self.reduce_addr = None
         self.reduce_conn = None
         self.control_conn = None
+        self.computer_time = 0.0
         # only for reduce node to use
         self.result_from_nodes = {}
         self.connected_computer_node = 0
@@ -119,6 +120,7 @@ class ComputeNode:
         return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
 
     def execute_task(self, task_id, node_num,rank):
+        t1 = time.time()
         task_dir = f"task_node{self.node_id}"
         task_file = f"{task_dir}/task.py"
         data_file = f"{task_dir}/setup.txt"
@@ -164,6 +166,8 @@ class ComputeNode:
                         if self.connected_computer_node == len(self.result_from_nodes) -1:
                             final_result = task_module.do_task2_2(self.result_from_nodes.values())
                             print(f"Final result: {final_result}")
+                            t2 = time.time()
+                            self.computer_time = t2 - t1
                             self.send_result_to_control(final_result)
                             self.result_from_nodes = {}
                             os.remove(f"task_node{self.node_id}/task.py")
@@ -190,6 +194,8 @@ class ComputeNode:
                         if self.connected_computer_node == len(self.result_from_nodes) -1:
                             final_result = task_module.do_task2(self.result_from_nodes.values())
                             print(f"Final result: {final_result}")
+                            t2 = time.time()
+                            self.computer_time = t2 - t1
                             self.send_result_to_control(final_result)
                             self.result_from_nodes = {}
                             os.remove(f"task_node{self.node_id}/task.py")
@@ -197,10 +203,11 @@ class ComputeNode:
                             break
             except Exception as e:
                 print(f"Error executing task: {e}")
+        
 
     def send_result_to_control(self,final_result):
         try:
-            message = json.dumps({'type': 'result', 'result': final_result}).encode()
+            message = json.dumps({'type': 'result', 'result': final_result , 'Single_node_time':self.computer_time}).encode()
             self.control_conn.sendall(message)
             print(f"Sent final result to control node")
         except Exception as e:

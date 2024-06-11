@@ -12,7 +12,7 @@ def send_start_task_command(control_host, control_port, task_id):
                 message = s.recv(1024)
                 if message:
                     result = json.loads(message.decode())
-                    print(f"Received final result: {result['result']},computer_node_num: {result['computer_node_num']}, time cost: {result['time_cost']}")
+                    print(f"Received final result: {result['result']},computer_node_num: {result['computer_node_num']}, time cost: {result['total_time_cost']} ,Single node time :{result['Single_node_time']}, Speedup ratio : {result['Speedup ratio']}")
                     break
     except Exception as e:
         print(f"Error sending start task command: {e}")

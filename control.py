@@ -49,6 +49,7 @@ class ControlNode:
 
     def handle_start_task(self, task_data, cmd_conn):
         try:
+            t_start = time.time()
             task_id = task_data['task_id']
             task_file_path = f"task/task{task_id}.py"
             setup_file_path = f"task/setup{task_id}.txt"
@@ -69,7 +70,7 @@ class ControlNode:
                 except Exception as e:
                     print(f"Error sending task to node {node_id}: {e}")
 
-            t_start = time.time()
+            
             #从reduce计算节点接收最终结果
             while True:
                 message = self.compute_conns[0].recv(1024)
@@ -77,8 +78,9 @@ class ControlNode:
                     result = json.loads(message.decode())
                     print('Received final result:',result['result'])
                     t_finish = time.time()
+                    speed_r = round(result['Single_node_time']*len(self.compute_nodes)/(t_finish - t_start),2)
                     try: 
-                        message = json.dumps({'type': 'result', 'result': result['result'],'computer_node_num': len(self.compute_nodes), 'time_cost': t_finish - t_start}).encode()
+                        message = json.dumps({'type': 'result', 'result': result['result'],'computer_node_num': len(self.compute_nodes), 'total_time_cost': t_finish - t_start,'Single_node_time':result['Single_node_time'],'Speedup ratio':speed_r}).encode()
                         cmd_conn.send(message)
                     except Exception as e:
                         print(f"Error sending final result to cmd: {e}")
