@@ -20,6 +20,8 @@ class ComputeNode:
         # only for reduce node to use
         self.result_from_nodes = {}
         self.connected_computer_node = 0
+        self.middle_result = None
+        self.send_middle_result = {}
 
     def get_random_port(self):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -80,9 +82,9 @@ class ComputeNode:
             if data:
                 message = json.loads(data.decode())
                 if message['type'] == 'task':
-                    self.execute_task(message['task_info'],message['joint_node'], message['part'])
+                    self.execute_task(message['task_id'],message['joint_node'], message['part'])
         except Exception as e:
-            print(f"Error handling task from {addr}: {e}")
+            print(f"Error handling task from : {e}")
 
     def receive_task_file(self):
         task_dir = f"task_node{self.node_id}"
@@ -103,8 +105,7 @@ class ComputeNode:
     def generate_random_string(self, length=8):
         return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
 
-    def execute_task(self, task_info,node_num, task_part):
-        task_id = task_info['task_id']
+    def execute_task(self, task_id, node_num, task_part):
         task_dir = f"task_node{self.node_id}"
         task_file = f"{task_dir}/task.py"
 
@@ -117,28 +118,69 @@ class ComputeNode:
             print(f"Error loading task module: {e}")
             return
 
-        # 执行任务
-        try:
-            if task_part:
-                result = task_module.do_task1(task_part)
-            else:
-                #如果没有数据内容，那么根据自己的id号和总计算节点个数进行计算
-                result = task_module.do_task1(self.node_id,node_num)
-            print(f"Task result: {result}")
-            self.result_from_nodes[self.node_id] = result
-            if self.node_id != 0:
-                self.send_result_to_reduce(result)
-            else:
-                while True:
-                    if self.connected_computer_node == len(self.result_from_nodes) -1:
-                        final_result = task_module.do_task2(self.result_from_nodes.values())
-                        print(f"Final result: {final_result}")
-                        self.send_result_to_control(final_result)
-                        self.result_from_nodes = {}
-                        os.remove(f"task_node{self.node_id}/task.py")
-                        break
-        except Exception as e:
-            print(f"Error executing task: {e}")
+        # 如果task_module中存在名为do_task1_2的函数
+        if hasattr(task_module, 'do_task1_2') and task_part:
+            # 执行多轮次归约任务
+            try:
+                result1 = task_module.do_task1_1(task_part)
+                print(f"Task temp result: {result1}")
+                self.result_from_nodes[self.node_id] = result1
+                # 第一轮归约
+                if self.node_id != 0:
+                    self.send_result_to_reduce(result1)
+                else:
+                    while True:
+                        if self.connected_computer_node == len(self.result_from_nodes) -1 and self.middle_result == None:
+                            middle_result = task_module.do_task2_1(self.result_from_nodes.values())
+                            print(f"middle result: {middle_result}")
+                            self.middle_result = middle_result
+                            self.result_from_nodes = {}
+                            break
+                while self.middle_result == None:
+                    pass
+                result = task_module.do_task1_2(task_part,self.middle_result)
+                print(f"Task result: {result}")
+                self.result_from_nodes[self.node_id] = result
+                # 第二轮规约
+                if self.node_id != 0:
+                    self.send_result_to_reduce(result)
+                    self.middle_result = None
+                else:
+                    while True:
+                        if self.connected_computer_node == len(self.result_from_nodes) -1:
+                            final_result = task_module.do_task2_2(self.result_from_nodes.values())
+                            print(f"Final result: {final_result}")
+                            self.send_result_to_control(final_result)
+                            self.result_from_nodes = {}
+                            os.remove(f"task_node{self.node_id}/task.py")
+                            self.middle_result = None
+                            break
+            except Exception as e:
+                print(f"Error executing task: {e}")
+        else:   
+            # 执行单轮次归约任务
+            try:
+                if task_part:
+                    result = task_module.do_task1(task_part)
+                else:
+                    #如果没有数据内容，那么根据自己的id号和总计算节点个数进行计算
+                    result = task_module.do_task1(self.node_id,node_num)
+                print(f"Task result: {result}")
+                self.result_from_nodes[self.node_id] = result
+                
+                if self.node_id != 0:
+                    self.send_result_to_reduce(result)
+                else:
+                    while True:
+                        if self.connected_computer_node == len(self.result_from_nodes) -1:
+                            final_result = task_module.do_task2(self.result_from_nodes.values())
+                            print(f"Final result: {final_result}")
+                            self.send_result_to_control(final_result)
+                            self.result_from_nodes = {}
+                            os.remove(f"task_node{self.node_id}/task.py")
+                            break
+            except Exception as e:
+                print(f"Error executing task: {e}")
 
     def send_result_to_control(self,final_result):
         try:
@@ -155,11 +197,7 @@ class ComputeNode:
         try:
             message = json.dumps({'type': 'result', 'node_id': self.node_id, 'result': result}).encode()
             self.reduce_conn.sendall(message)
-            print(f"Sent result to reduce node at {self.reduce_addr}")
-            ack = self.reduce_conn.recv(1024)
-            if ack == b'success':
-                print(f"Result acknowledged by reduce node")
-                os.remove(f"task_node{self.node_id}/task.py")
+            print(f"Sent result: {result} to reduce node at {self.reduce_addr}") 
         except Exception as e:
             print(f"Error sending result to reduce node: {e}")
 
@@ -170,6 +208,7 @@ class ComputeNode:
                 self.reduce_conn.connect((self.reduce_addr[0], self.reduce_addr[1] + 1))
                 self.reduce_conn.sendall(json.dumps({'type': 'connect', 'node_id': self.node_id}).encode())
                 print('connect to reduce node successfully！')
+                threading.Thread(target=self.listen_to_reduce_node,args=()).start()
                 break
             except Exception as e:
                 print(f"Error connecting to reduce node: {e}")
@@ -188,9 +227,41 @@ class ComputeNode:
                     id = response['node_id']
                     print(f'node_id {id} connect into this reduce node!')
                     self.connected_computer_node += 1
-                threading.Thread(target=self.handle_result,args=(conn,id)).start()
+                    self.send_middle_result[id] = False
+                threading.Thread(target=self.handle_node_message,args=(conn,id)).start()
+                threading.Thread(target=self.send_middle_result_to_node,args=(conn,id)).start()
 
-    def handle_result(self,conn,node_id):
+    def listen_to_reduce_node(self):
+        while True:
+            data = self.reduce_conn.recv(1024)
+            if data:
+                if data == b'success':
+                    print(f"Result acknowledged by reduce node")
+                    if self.middle_result:
+                        os.remove(f"task_node{self.node_id}/task.py")
+                else:
+                    message = json.loads(data.decode())
+                    if message['type'] == 'middle_result':
+                        print(f"Received middle result from reduce node: {message['result']}")
+                        self.middle_result = message['result']
+
+    def send_middle_result_to_node(self,conn,node_id):
+        while True:
+            if self.middle_result==None and self.send_middle_result[node_id] == True:
+                self.send_middle_result[node_id] = False
+                pass
+                
+            if self.middle_result and self.send_middle_result[node_id] == False:
+                try:
+                    message = json.dumps({'type': 'middle_result', 'result': self.middle_result}).encode()
+                    conn.sendall(message)
+                    print(f"Sent middle result to {node_id} node")
+                    self.send_middle_result[node_id] = True
+                    pass
+                except Exception as e:
+                    print(f"Error sending middle result to {node_id} node: {e}")
+    
+    def handle_node_message(self,conn,node_id):
         while True:
             data = conn.recv(1024)
             if data:
@@ -200,6 +271,8 @@ class ComputeNode:
                     print(f"Received result from node {message['node_id']}: {message['result']}")
                     self.result_from_nodes[message['node_id']] = message['result']
                     conn.sendall(b'success')
+                
+            
 
 if __name__ == "__main__":
     compute_node = ComputeNode(control_host='127.0.0.1', control_port=5000)

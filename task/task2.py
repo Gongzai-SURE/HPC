@@ -1,4 +1,4 @@
-max_n = 10000
+max_n = 1000000
 def is_prime(n):
     if n <= 1:
         return False

@@ -40,14 +40,14 @@ class ControlNode:
                 command = json.loads(data.decode())
                 print(f"Received command: {command}")
                 if command['type'] == 'start_task':
-                    self.handle_start_task(command['task_data'])
+                    self.handle_start_task(command['task_data'],conn)
                 elif command['type'] == 'end_task':
                     conn.close()
                     self.close_all_resource()
         except Exception as e:
             print(f"Error handling command from {addr}: {e}")
 
-    def handle_start_task(self, task_data):
+    def handle_start_task(self, task_data, cmd_conn):
         try:
             task_id = task_data['task_id']
             task_file_path = f"task/task{task_id}.py"
@@ -62,7 +62,7 @@ class ControlNode:
                 return
 
             task_parts = self.split_task(setup_info)
-
+            
             # 分发任务文件和任务数据到计算节点
             for i, node_id in enumerate(self.compute_nodes):
                 try:
@@ -72,18 +72,24 @@ class ControlNode:
                     self.send_task_file(node_id, task_file_path)
                     time.sleep(0.1)
                     if task_parts:
-                        self.send_task(node_id, {'task_id': task_id, 'setup_info': setup_info}, task_parts[i])
+                        self.send_task(node_id, task_id, task_parts[i])
                     else:
-                        self.send_task(node_id, {'task_id': task_id, 'setup_info': setup_info}, None)
+                        self.send_task(node_id, task_id, None)
                 except Exception as e:
                     print(f"Error sending task to node {node_id}: {e}")
-            
+            t_start = time.time()
             #从reduce计算节点接收最终结果
             while True:
                 message = self.compute_conns[0].recv(1024)
                 if message: 
                     result = json.loads(message.decode())
                     print('Received final result:',result['result'])
+                    t_finish = time.time()
+                    try: 
+                        message = json.dumps({'type': 'result', 'result': result['result'],'computer_node_num': len(self.compute_nodes), 'time_cost': t_finish - t_start}).encode()
+                        cmd_conn.send(message)
+                    except Exception as e:
+                        print(f"Error sending final result to cmd: {e}")
                     break
         except KeyError as e:
             print(f"Error: missing key {e} in task_data")
@@ -124,10 +130,10 @@ class ControlNode:
         except Exception as e:
             print(f"Error sending task file {task_file_path} to node {node_id}: {e}")
 
-    def send_task(self, node_id, task_info, task_part):
+    def send_task(self, node_id, task_id, task_part):
         conn = self.compute_conns[node_id]
         try:
-            message = json.dumps({'type': 'task', 'task_info': task_info, 'joint_node': len(self.compute_nodes), 'part': task_part}).encode()
+            message = json.dumps({'type': 'task', 'task_id': task_id ,'joint_node': len(self.compute_nodes), 'part': task_part}).encode()
             conn.sendall(message)
             print(f"Sent task part to node {node_id}")
         except Exception as e:
